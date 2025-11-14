@@ -1,0 +1,36 @@
+{
+  "name": "token-creator-bot",
+  "version": "1.0.0",
+  "description": "Telegram Bot for creating ERC-20 tokens on Alvey Chain",
+  "main": "bot/index.js",
+  "scripts": {
+    "start": "node bot/index.js",
+    "deploy": "hardhat run scripts/deploy.js --network alvey",
+    "setup-db": "node scripts/setupDB.js",
+    "repair-mysql": "node scripts/repairMySQL.js",
+    "test-db": "node scripts/testConnection.js",
+    "create-tables": "node scripts/createTables.js",
+    "compile": "hardhat compile"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "blockchain",
+    "erc20",
+    "alvey-chain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "ethers": "^6.9.0",
+    "mysql2": "^3.6.5",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "^5.0.1",
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.4"
+  }
+}
+
