@@ -43,6 +43,20 @@ const TIMEOUTS = {
 // Test mode (skip payment verification)
 const TEST_MODE = process.env.TEST_MODE === "true" || process.env.TEST_MODE === "1";
 
+// Disable rate limit for testing
+const DISABLE_RATE_LIMIT = process.env.DISABLE_RATE_LIMIT === "true" || process.env.DISABLE_RATE_LIMIT === "1";
+
+// NEW: Feature validation limits
+const FEATURE_LIMITS = {
+  MIN_TAX: 0,
+  MAX_TAX: 100,
+  MIN_REFLECTION: 0,
+  MAX_REFLECTION: 100,
+  MIN_BURN: 0,
+  MAX_BURN: 100,
+  MAX_TOTAL_FEES: 100,  // Tax + Reflection + Burn cannot exceed
+};
+
 // USDT token ABI (minimal for transfer detection)
 const USDT_ABI = [
   "function transfer(address to, uint256 amount) external returns (bool)",
@@ -53,7 +67,8 @@ const USDT_ABI = [
 
 // Factory ABI (minimal)
 const FACTORY_ABI = [
-  "function createToken(string memory _name, string memory _symbol, uint256 _initialSupply, uint256 _taxPercent, address _taxWallet, address _initialOwner) external returns (address)",
+  "function createToken(string memory _name, string memory _symbol, uint256 _initialSupply, uint8 _taxPercent, address _taxWallet, uint8 _reflectionPercent, uint8 _burnPercent, bool _enableReflection, bool _enableBurn, address _initialOwner) external returns (address)",
+  "function getTokenFeatures(address tokenAddress) external view returns (bool hasReflection, bool hasBurn, uint8 reflectionPercent, uint8 burnPercent, address taxWallet, uint8 taxPercent)",
   "event TokenDeployed(address indexed tokenAddress, address indexed creator, string name, string symbol, uint256 initialSupply, uint256 taxPercent, address taxWallet, address initialOwner)",
 ];
 
@@ -75,5 +90,7 @@ module.exports = {
   FACTORY_ABI,
   TOKEN_ABI,
   TEST_MODE,
+  FEATURE_LIMITS,
+  DISABLE_RATE_LIMIT,
 };
 

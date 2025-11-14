@@ -33,6 +33,10 @@ contract TokenFactory {
      * @param _initialSupply Initial token supply
      * @param _taxPercent Tax percentage (0-100)
      * @param _taxWallet Address that receives tax tokens
+     * @param _reflectionPercent Reflection percentage (0-100)
+     * @param _burnPercent Burn percentage (0-100)
+     * @param _enableReflection Enable reflection feature
+     * @param _enableBurn Enable burn feature
      * @param _initialOwner Initial owner address
      * @return tokenAddress Address of the deployed token
      */
@@ -40,10 +44,28 @@ contract TokenFactory {
         string memory _name,
         string memory _symbol,
         uint256 _initialSupply,
-        uint256 _taxPercent,
+        uint8 _taxPercent,
         address _taxWallet,
+        uint8 _reflectionPercent,
+        uint8 _burnPercent,
+        bool _enableReflection,
+        bool _enableBurn,
         address _initialOwner
     ) external returns (address tokenAddress) {
+        // Validate inputs
+        require(bytes(_name).length > 0, "Name required");
+        require(bytes(_symbol).length > 0, "Symbol required");
+        
+        // NEW: Validate reflection and burn parameters
+        require(_reflectionPercent <= 100, "Reflection cannot exceed 100%");
+        require(_burnPercent <= 100, "Burn cannot exceed 100%");
+        
+        // NEW: Validate total fees
+        require(
+            _taxPercent + _reflectionPercent + _burnPercent <= 100,
+            "Total fees (tax + reflection + burn) cannot exceed 100%"
+        );
+        
         // Deploy new SecureToken
         SecureToken newToken = new SecureToken(
             _name,
@@ -51,6 +73,10 @@ contract TokenFactory {
             _initialSupply,
             _taxPercent,
             _taxWallet,
+            _reflectionPercent,
+            _burnPercent,
+            _enableReflection,
+            _enableBurn,
             _initialOwner
         );
 
@@ -102,6 +128,33 @@ contract TokenFactory {
     function getTokenAtIndex(uint256 index) external view returns (address) {
         require(index < deployedTokens.length, "Index out of bounds");
         return deployedTokens[index];
+    }
+
+    /**
+     * NEW: Get all features of a deployed token
+     * Returns: (hasReflection, hasBurn, reflectionPercent, burnPercent, taxWallet, taxPercent)
+     */
+    function getTokenFeatures(address tokenAddress) 
+        external 
+        view 
+        returns (
+            bool hasReflection,
+            bool hasBurn,
+            uint8 reflectionPercent,
+            uint8 burnPercent,
+            address taxWallet,
+            uint8 taxPercent
+        ) 
+    {
+        SecureToken token = SecureToken(tokenAddress);
+        return (
+            token.HAS_REFLECTION(),
+            token.HAS_BURN(),
+            token.REFLECTION_PERCENT(),
+            token.BURN_PERCENT(),
+            token.taxWallet(),
+            uint8(token.taxPercent())
+        );
     }
 }
 

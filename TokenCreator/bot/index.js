@@ -10,7 +10,7 @@ const {
   handleOwnershipTransfer,
   MANAGE_STEPS,
 } = require("./handlers/manageToken");
-const { getUser, getUserSession, deleteUserSession } = require("./utils/database");
+const { getUser, getUserSession, deleteUserSession, saveUserSession } = require("./utils/database");
 const { startPaymentListener } = require("./handlers/paymentVerification");
 
 // Initialize bot
@@ -54,6 +54,7 @@ Commands:
 /create_token - Create a new token
 /my_tokens - View your created tokens
 /manage - Manage your tokens
+/analyze - Analyze any token
 /help - Get help and information
 
 Let's get started! 🚀
@@ -83,6 +84,40 @@ bot.onText(/\/create_token/, (msg) => handleCreateToken(bot, msg));
  * Handle /my_tokens command
  */
 bot.onText(/\/my_tokens/, (msg) => handleMyTokens(bot, msg));
+
+/**
+ * NEW: Handle /analyze command - analyze any token
+ */
+bot.onText(/\/analyze/, async (msg) => {
+  // Validate message structure
+  if (!msg || !msg.chat || !msg.from) {
+    console.error("Invalid message structure:", msg);
+    return;
+  }
+
+  const chatId = msg.chat.id;
+  const telegramId = msg.from.id;
+  
+  try {
+    await getUser(telegramId, {
+      username: msg.from.username,
+      first_name: msg.from.first_name,
+      last_name: msg.from.last_name,
+    });
+    
+    await bot.sendMessage(
+      chatId,
+      '🔍 <b>Token Analyzer</b>\n\n' +
+      'Paste the token address you want to analyze:',
+      { parse_mode: 'HTML' }
+    );
+    
+    await saveUserSession(telegramId, 'waiting_analyze_address', {});
+  } catch (error) {
+    console.error("Error in /analyze:", error);
+    await bot.sendMessage(chatId, "❌ An error occurred. Please try again.");
+  }
+});
 
 /**
  * Handle /manage command
@@ -130,6 +165,12 @@ bot.onText(/\/help/, async (msg) => {
 - Click on a token to view details
 - Manage ownership from token details
 
+🔹 Analyzing Tokens:
+- Use /analyze to analyze any token by address
+- Or click "🔍 Analyze" button on your tokens
+- Shows all features: Tax, Reflection, Burn
+- Displays security status and explorer links
+
 🔹 Payment:
 - Send exactly 20 USDT from BSC
 - Payment is verified automatically
@@ -159,6 +200,32 @@ bot.on("callback_query", async (query) => {
       await handleManageToken(bot, query);
     } else if (data.startsWith("transfer_owner_")) {
       await handleTransferOwnershipStart(bot, query);
+    } else if (data.startsWith("analyze_")) {
+      // NEW: Handle analyze button click
+      const tokenId = data.split("_")[1];
+      
+      const { getToken } = require("./utils/database");
+      const token = await getToken(parseInt(tokenId, 10));
+      
+      if (!token) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Token not found', show_alert: true });
+        return;
+      }
+      
+      const tokenAddress = token.token_address;
+      
+      // Get user to ensure they exist and get userId
+      const user = await getUser(query.from.id, {
+        username: query.from.username,
+        first_name: query.from.first_name,
+        last_name: query.from.last_name,
+      });
+      
+      // Import and call analyzer
+      const { analyzeToken } = require('./handlers/analyzeToken');
+      await analyzeToken(bot, query.message.chat.id, user.id, tokenAddress);
+      
+      await bot.answerCallbackQuery(query.id);
     }
   } catch (error) {
     console.error("Error handling callback query:", error);
@@ -203,6 +270,28 @@ bot.on("message", async (msg) => {
       // Check if in ownership transfer flow
       if (session.step === MANAGE_STEPS.WAITING_OWNER_TRANSFER) {
         await handleOwnershipTransfer(bot, msg);
+        return;
+      }
+
+      // NEW: Handle analyze address input
+      if (session.step === 'waiting_analyze_address') {
+        const tokenAddress = msg.text.trim();
+        
+        // Get user to ensure they exist and get userId
+        const user = await getUser(telegramId, {
+          username: msg.from.username,
+          first_name: msg.from.first_name,
+          last_name: msg.from.last_name,
+        });
+        
+        // Import analyzer
+        const { analyzeToken } = require('./handlers/analyzeToken');
+        
+        // Analyze the token
+        await analyzeToken(bot, msg.chat.id, user.id, tokenAddress);
+        
+        // Clear session
+        await deleteUserSession(telegramId);
         return;
       }
     }

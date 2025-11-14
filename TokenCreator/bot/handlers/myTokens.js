@@ -103,11 +103,16 @@ Created: ${date}
 🔗 TX: ${NETWORKS[token.network]?.explorer || NETWORKS.alvey.explorer}/tx/${token.tx_hash}
 `;
 
+    // NEW: Add analyze button
     await bot.sendMessage(chatId, message, {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [
           [
+            {
+              text: "🔍 Analyze",
+              callback_data: `analyze_${token.id}`,
+            },
             {
               text: "🔧 Manage Token",
               callback_data: `manage_${token.id}`,

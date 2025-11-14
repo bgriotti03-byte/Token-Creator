@@ -74,8 +74,9 @@ const saveToken = async (userId, tokenData) => {
     const [result] = await pool.execute(
       `INSERT INTO tokens (
         user_id, token_name, token_symbol, initial_supply, tax_percent,
-        tax_wallet, token_address, owner_wallet, factory_address, tx_hash, network
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tax_wallet, token_address, owner_wallet, factory_address, tx_hash, network,
+        reflection_percent, burn_percent, has_reflection, has_burn
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         tokenData.token_name,
@@ -88,6 +89,10 @@ const saveToken = async (userId, tokenData) => {
         tokenData.factory_address,
         tokenData.tx_hash,
         tokenData.network || "alvey",
+        tokenData.reflection_percent || 0,
+        tokenData.burn_percent || 0,
+        tokenData.has_reflection || false,
+        tokenData.has_burn || false,
       ]
     );
     return result.insertId;

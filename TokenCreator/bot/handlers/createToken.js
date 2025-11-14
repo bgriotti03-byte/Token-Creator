@@ -15,7 +15,7 @@ const {
   isValidEthereumAddress,
   sanitizeInput,
 } = require("../utils/validators");
-const { ADDRESSES, PAYMENT, NETWORKS, TEST_MODE } = require("../config/constants");
+const { ADDRESSES, PAYMENT, NETWORKS, TEST_MODE, DISABLE_RATE_LIMIT } = require("../config/constants");
 const {
   startPaymentListener,
   deployTokenAfterPayment,
@@ -29,6 +29,10 @@ const STEPS = {
   WAITING_TAX_CHOICE: "waiting_tax_choice",
   WAITING_TAX_PERCENT: "waiting_tax_percent",
   WAITING_TAX_WALLET: "waiting_tax_wallet",
+  WAITING_REFLECTION_CHOICE: "waiting_reflection_choice",
+  WAITING_REFLECTION_PERCENT: "waiting_reflection_percent",
+  WAITING_BURN_CHOICE: "waiting_burn_choice",
+  WAITING_BURN_PERCENT: "waiting_burn_percent",
   WAITING_CONFIRMATION: "waiting_confirmation",
   WAITING_PAYER_WALLET: "waiting_payer_wallet",
   WAITING_PAYMENT: "waiting_payment",
@@ -79,20 +83,22 @@ const handleCreateToken = async (bot, msg) => {
       last_name: msg.from.last_name,
     });
 
-    // Check rate limit (1 token every 10 minutes)
-    const { getUserTokens } = require("../utils/database");
-    const userTokens = await getUserTokens(user.id);
-    if (userTokens.length > 0) {
-      const lastToken = userTokens[0];
-      const timeSinceLastToken = Date.now() - new Date(lastToken.deployed_at).getTime();
-      if (timeSinceLastToken < 600000) {
-        // 10 minutes
-        const remainingMinutes = Math.ceil((600000 - timeSinceLastToken) / 60000);
-        await bot.sendMessage(
-          chatId,
-          `⏳ Rate limit: Please wait ${remainingMinutes} minute(s) before creating another token.`
-        );
-        return;
+    // Check rate limit (1 token every 10 minutes) - disabled in test mode
+    if (!DISABLE_RATE_LIMIT) {
+      const { getUserTokens } = require("../utils/database");
+      const userTokens = await getUserTokens(user.id);
+      if (userTokens.length > 0) {
+        const lastToken = userTokens[0];
+        const timeSinceLastToken = Date.now() - new Date(lastToken.deployed_at).getTime();
+        if (timeSinceLastToken < 600000) {
+          // 10 minutes
+          const remainingMinutes = Math.ceil((600000 - timeSinceLastToken) / 60000);
+          await bot.sendMessage(
+            chatId,
+            `⏳ Rate limit: Please wait ${remainingMinutes} minute(s) before creating another token.`
+          );
+          return;
+        }
       }
     }
 
@@ -210,6 +216,101 @@ const handleTokenCreationFlow = async (bot, msg) => {
         return;
       }
       session_data.taxWallet = text;
+      // NEW: Ask about Reflection
+      await saveUserSession(telegramId, STEPS.WAITING_REFLECTION_CHOICE, session_data);
+      await bot.sendMessage(chatId, '💰 Enable Reflection Rewards?\n\nHolders will automatically earn rewards just by holding tokens.', {
+        reply_markup: {
+          keyboard: [[{ text: "✅ Yes" }, { text: "❌ No" }]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      });
+    } else if (step === STEPS.WAITING_REFLECTION_CHOICE) {
+      const choice = text.toLowerCase();
+      if (choice === "yes" || choice === "y" || choice === "✅ yes") {
+        await saveUserSession(telegramId, STEPS.WAITING_REFLECTION_PERCENT, session_data);
+        await bot.sendMessage(chatId, '📊 What reflection percentage? (0-100%)');
+      } else if (choice === "no" || choice === "n" || choice === "❌ no") {
+        session_data.enableReflection = false;
+        session_data.reflectionPercent = 0;
+        await saveUserSession(telegramId, STEPS.WAITING_BURN_CHOICE, session_data);
+        await bot.sendMessage(
+          chatId,
+          '🔥 Enable Burn on Transfer?\n\nTokens will be deflated with each transaction.',
+          {
+            reply_markup: {
+              keyboard: [[{ text: "✅ Yes" }, { text: "❌ No" }]],
+              resize_keyboard: true,
+              one_time_keyboard: true,
+            },
+          }
+        );
+      } else {
+        await bot.sendMessage(chatId, "Please answer Yes or No.");
+      }
+    } else if (step === STEPS.WAITING_REFLECTION_PERCENT) {
+      const reflectionPercent = parseInt(text);
+      
+      if (isNaN(reflectionPercent) || reflectionPercent < 0 || reflectionPercent > 100) {
+        await bot.sendMessage(chatId, '❌ Reflection must be a number between 0 and 100');
+        return;
+      }
+      
+      session_data.reflectionPercent = reflectionPercent;
+      session_data.enableReflection = true;
+      await saveUserSession(telegramId, STEPS.WAITING_BURN_CHOICE, session_data);
+      await bot.sendMessage(
+        chatId,
+        '🔥 Enable Burn on Transfer?\n\nTokens will be deflated with each transaction.',
+        {
+          reply_markup: {
+            keyboard: [[{ text: "✅ Yes" }, { text: "❌ No" }]],
+            resize_keyboard: true,
+            one_time_keyboard: true,
+          },
+        }
+      );
+    } else if (step === STEPS.WAITING_BURN_CHOICE) {
+      const choice = text.toLowerCase();
+      if (choice === "yes" || choice === "y" || choice === "✅ yes") {
+        await saveUserSession(telegramId, STEPS.WAITING_BURN_PERCENT, session_data);
+        await bot.sendMessage(chatId, '🔥 What burn percentage? (0-100%)');
+      } else if (choice === "no" || choice === "n" || choice === "❌ no") {
+        session_data.enableBurn = false;
+        session_data.burnPercent = 0;
+        await showPreview(bot, chatId, telegramId, session_data);
+      } else {
+        await bot.sendMessage(chatId, "Please answer Yes or No.");
+      }
+    } else if (step === STEPS.WAITING_BURN_PERCENT) {
+      const burnPercent = parseInt(text);
+      
+      if (isNaN(burnPercent) || burnPercent < 0 || burnPercent > 100) {
+        await bot.sendMessage(chatId, '❌ Burn must be a number between 0 and 100');
+        return;
+      }
+      
+      session_data.burnPercent = burnPercent;
+      session_data.enableBurn = true;
+      
+      // NEW: Validate total fees
+      const totalFees = (session_data.taxPercent || 0) + 
+                        (session_data.reflectionPercent || 0) + 
+                        (burnPercent || 0);
+      
+      if (totalFees > 100) {
+        await bot.sendMessage(
+          chatId,
+          `❌ Error: Total fees (${totalFees}%) exceed 100%\n\n` +
+          `Tax: ${session_data.taxPercent || 0}%\n` +
+          `Reflection: ${session_data.reflectionPercent || 0}%\n` +
+          `Burn: ${burnPercent}%\n\n` +
+          `Please reduce one or more percentages.`
+        );
+        await saveUserSession(telegramId, STEPS.WAITING_BURN_PERCENT, session_data);
+        return;
+      }
+      
       await showPreview(bot, chatId, telegramId, session_data);
     } else if (step === STEPS.WAITING_CONFIRMATION) {
       if (text.toLowerCase() === "confirm" || text === "✅ Confirm") {
@@ -273,14 +374,24 @@ const showPreview = async (bot, chatId, telegramId, sessionData) => {
     ? "🧪 TEST MODE: Payment verification skipped"
     : `Payment: ${PAYMENT.AMOUNT_USDT} USDT (BSC)`;
   
+  // NEW: Calculate total fees
+  const totalFees = (sessionData.taxPercent || 0) + 
+                    (sessionData.reflectionPercent || 0) + 
+                    (sessionData.burnPercent || 0);
+  
   const preview = `
 📋 Token Preview:
 
 Name: ${sessionData.name}
 Symbol: ${sessionData.symbol}
 Supply: ${parseInt(sessionData.initialSupply).toLocaleString()}
-Tax: ${sessionData.taxPercent || 0}%
+
+💰 TAX: ${sessionData.taxPercent || 0}%
 ${sessionData.taxWallet ? `Tax Wallet: ${sessionData.taxWallet}` : ""}
+✨ REFLECTION: ${sessionData.reflectionPercent || 0}%
+🔥 BURN: ${sessionData.burnPercent || 0}%
+
+💾 Total Fees: ${totalFees}%
 
 ${paymentInfo}
 `;
@@ -404,6 +515,10 @@ const handleTokenDeployment = async (
         initialSupply: sessionData.initialSupply,
         taxPercent: sessionData.taxPercent || 0,
         taxWallet: sessionData.taxWallet || null,
+        reflectionPercent: sessionData.reflectionPercent || 0,
+        burnPercent: sessionData.burnPercent || 0,
+        enableReflection: sessionData.enableReflection || false,
+        enableBurn: sessionData.enableBurn || false,
       },
       ownerWallet
     );
@@ -430,10 +545,26 @@ Tax: ${sessionData.taxPercent || 0}%
     await deleteUserSession(telegramId);
   } catch (error) {
     console.error("Error deploying token:", error);
-    await bot.sendMessage(
-      chatId,
-      `❌ Error deploying token: ${error.message}`
-    );
+    
+    // Check if error is about Factory version
+    if (error.message && error.message.includes("Reflection and Burn features require")) {
+      await bot.sendMessage(
+        chatId,
+        `❌ ${error.message}\n\n` +
+        `💡 <b>Solution:</b>\n` +
+        `To use Reflection and Burn features, you need to deploy the updated Factory contract.\n\n` +
+        `1. Compile the new TokenFactory.sol contract\n` +
+        `2. Deploy it to Alvey Chain\n` +
+        `3. Update FACTORY_ADDRESS in your .env file\n\n` +
+        `Alternatively, you can create tokens without Reflection/Burn using the current Factory.`,
+        { parse_mode: 'HTML' }
+      );
+    } else {
+      await bot.sendMessage(
+        chatId,
+        `❌ Error deploying token: ${error.message}`
+      );
+    }
   }
 };
 

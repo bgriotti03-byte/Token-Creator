@@ -187,6 +187,10 @@ const deployTokenAfterPayment = async (
       factory_address: factoryAddress,
       tx_hash: result.txHash,
       network: "alvey",
+      reflection_percent: tokenParams.reflectionPercent || 0,
+      burn_percent: tokenParams.burnPercent || 0,
+      has_reflection: tokenParams.enableReflection || false,
+      has_burn: tokenParams.enableBurn || false,
     });
 
     await logActivity(userId, "token_deployed", {

@@ -86,15 +86,54 @@ const deployToken = async (factoryAddress, params, network = "alvey") => {
       taxWallet = taxWallet.toString();
     }
     
-    // Call factory.createToken
-    const tx = await factory.createToken(
-      params.name,
-      params.symbol,
-      initialSupply,
-      params.taxPercent,
-      taxWallet,
-      params.initialOwner
-    );
+    // Try to call factory.createToken with new parameters first
+    // If Factory is old version, fallback to old signature
+    let tx;
+    try {
+      // Try new signature (with reflection and burn)
+      tx = await factory.createToken(
+        params.name,
+        params.symbol,
+        initialSupply,
+        params.taxPercent || 0,
+        taxWallet,
+        params.reflectionPercent || 0,
+        params.burnPercent || 0,
+        params.enableReflection || false,
+        params.enableBurn || false,
+        params.initialOwner
+      );
+    } catch (error) {
+      // Factory might be old version - try old signature
+      console.log('New Factory signature failed, trying old signature...');
+      const OLD_FACTORY_ABI = [
+        "function createToken(string memory _name, string memory _symbol, uint256 _initialSupply, uint256 _taxPercent, address _taxWallet, address _initialOwner) external returns (address)",
+      ];
+      const oldFactory = new ethers.Contract(factoryAddress, OLD_FACTORY_ABI, wallet);
+      
+      // Check if reflection/burn are actually enabled with non-zero percentages
+      const hasReflection = params.enableReflection && (params.reflectionPercent || 0) > 0;
+      const hasBurn = params.enableBurn && (params.burnPercent || 0) > 0;
+      
+      if (hasReflection || hasBurn) {
+        throw new Error(
+          "⚠️ Reflection and Burn features require the new Factory contract.\n\n" +
+          "Your token will be created WITHOUT reflection/burn features.\n" +
+          "To use these features, please deploy the updated Factory contract first.\n\n" +
+          "You can still create tokens with Tax only using the current Factory."
+        );
+      }
+      
+      // Use old signature (reflection/burn are disabled or 0, so it's safe)
+      tx = await oldFactory.createToken(
+        params.name,
+        params.symbol,
+        initialSupply,
+        params.taxPercent || 0,
+        taxWallet,
+        params.initialOwner
+      );
+    }
 
     // Wait for transaction receipt
     const receipt = await tx.wait();
@@ -271,6 +310,91 @@ const getRecentTransactions = async (toAddress, fromBlock, network = "bsc") => {
   }
 };
 
+/**
+ * NEW: Get token features directly from SecureToken contract
+ * Reads public variables instead of using Factory (for backward compatibility)
+ */
+const getTokenFeatures = async (tokenAddress, network = "alvey") => {
+  try {
+    const provider = connectProvider(network);
+    
+    // ABI for reading public variables from SecureToken
+    const SECURE_TOKEN_FEATURES_ABI = [
+      "function HAS_REFLECTION() external view returns (bool)",
+      "function HAS_BURN() external view returns (bool)",
+      "function REFLECTION_PERCENT() external view returns (uint8)",
+      "function BURN_PERCENT() external view returns (uint8)",
+      "function taxWallet() external view returns (address)",
+      "function taxPercent() external view returns (uint256)",
+    ];
+
+    const tokenContract = new ethers.Contract(tokenAddress, SECURE_TOKEN_FEATURES_ABI, provider);
+    
+    // Try to read new features (for new tokens with reflection/burn)
+    try {
+      const [hasReflection, hasBurn, reflectionPercent, burnPercent, taxWallet, taxPercent] = await Promise.all([
+        tokenContract.HAS_REFLECTION().catch(() => false),
+        tokenContract.HAS_BURN().catch(() => false),
+        tokenContract.REFLECTION_PERCENT().catch(() => 0),
+        tokenContract.BURN_PERCENT().catch(() => 0),
+        tokenContract.taxWallet().catch(() => ethers.ZeroAddress),
+        tokenContract.taxPercent().catch(() => 0),
+      ]);
+      
+      return {
+        hasReflection: hasReflection || false,
+        hasBurn: hasBurn || false,
+        reflectionPercent: Number(reflectionPercent) || 0,
+        burnPercent: Number(burnPercent) || 0,
+        taxWallet: taxWallet || ethers.ZeroAddress,
+        taxPercent: Number(taxPercent) || 0
+      };
+    } catch (error) {
+      // Fallback: try reading only tax (for old tokens)
+      try {
+        const taxPercent = await tokenContract.taxPercent();
+        const taxWallet = await tokenContract.taxWallet().catch(() => ethers.ZeroAddress);
+        
+        return {
+          hasReflection: false,
+          hasBurn: false,
+          reflectionPercent: 0,
+          burnPercent: 0,
+          taxWallet: taxWallet || ethers.ZeroAddress,
+          taxPercent: Number(taxPercent) || 0
+        };
+      } catch (fallbackError) {
+        console.error('Error reading token features (fallback):', fallbackError);
+        return null;
+      }
+    }
+  } catch (error) {
+    console.error('Error getting token features:', error);
+    return null;
+  }
+};
+
+/**
+ * NEW: Check if a specific feature is enabled on token
+ */
+const checkTokenFeature = async (tokenAddress, featureName, network = "alvey") => {
+  try {
+    const features = await getTokenFeatures(tokenAddress, network);
+    if (!features) return false;
+    
+    const featureMap = {
+      'reflection': features.hasReflection,
+      'burn': features.hasBurn,
+      'tax': features.taxPercent > 0
+    };
+    
+    return featureMap[featureName] || false;
+  } catch (error) {
+    console.error('Error checking feature:', error);
+    return false;
+  }
+};
+
 module.exports = {
   connectProvider,
   getTokenDetails,
@@ -279,5 +403,7 @@ module.exports = {
   verifyPayment,
   getTransactionReceipt,
   getRecentTransactions,
+  getTokenFeatures,
+  checkTokenFeature,
 };
 
