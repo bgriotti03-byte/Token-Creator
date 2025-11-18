@@ -9,7 +9,7 @@ const {
   saveToken,
   getUser,
 } = require("../utils/database");
-const { ADDRESSES, PAYMENT, NETWORKS } = require("../config/constants");
+const { ADDRESSES, PAYMENT, NETWORKS, getNetwork } = require("../config/constants");
 const { logActivity } = require("../utils/database");
 
 /**
@@ -110,10 +110,14 @@ const startPaymentListener = async (
             await saveUserSession(telegramId, STEPS.WAITING_OWNER_WALLET, session.session_data);
           }
 
+          // NEW: Get network from session to show correct network name
+          const { getNetwork } = require("../config/constants");
+          const network = session ? getNetwork(session.session_data?.network || "alvey") : getNetwork("alvey");
+          
           // Notify user
           await bot.sendMessage(
             chatId,
-            "✅ Payment confirmed! Please send your ALVEY CHAIN wallet address to receive token ownership."
+            `✅ Payment confirmed! Please send your ${network.name.toUpperCase()} wallet address to receive token ownership.`
           );
 
           // Log activity
@@ -156,13 +160,17 @@ const deployTokenAfterPayment = async (
   ownerWallet
 ) => {
   try {
-    await bot.sendMessage(chatId, "⏳ Deploying token to Alvey Chain...");
+    // NEW: Get network from tokenParams or default to alvey
+    const networkKey = tokenParams.network || "alvey";
+    const network = getNetwork(networkKey);
+    
+    await bot.sendMessage(chatId, `⏳ Deploying token to ${network.name}...`);
 
-    const { ADDRESSES } = require("../config/constants");
-    const factoryAddress = ADDRESSES.FACTORY_ADDRESS;
+    // Use network factory address
+    const factoryAddress = network.factoryAddress;
 
     if (!factoryAddress || factoryAddress === "0x0000000000000000000000000000000000000000") {
-      throw new Error("Factory address not configured");
+      throw new Error(`Factory address not configured for ${network.name}`);
     }
 
     // Deploy token
@@ -172,10 +180,72 @@ const deployTokenAfterPayment = async (
         ...tokenParams,
         initialOwner: ownerWallet,
       },
-      "alvey"
+      networkKey
     );
 
-    // Save token to database
+    // NEW: Validate deployment result
+    if (!result || !result.tokenAddress) {
+      throw new Error('DEPLOYMENT FAILED: No token address returned from deployment');
+    }
+
+    // NEW: Additional validation - verify contract exists
+    const { connectProvider } = require("../utils/blockchain");
+    const provider = connectProvider(networkKey);
+    const code = await provider.getCode(result.tokenAddress);
+    
+    if (code === '0x' || code.length < 100) {
+      throw new Error(
+        `VALIDATION FAILED: No contract code at ${result.tokenAddress}\n` +
+        `Bytecode: ${code.length} bytes (expected >1000)\n` +
+        'Contract deployment verification failed'
+      );
+    }
+
+    console.log('✅ Deployment validated - Contract has', Math.floor((code.length - 2) / 2), 'bytes of code');
+
+    // NEW: Use verification helper (no source code comparison)
+    const { validateDeployment, storeDeploymentInfo, generateVerificationInstructions } = require('../utils/verificationHelper');
+    const { ethers } = require('ethers');
+    
+    // Get receipt from result if available, otherwise construct minimal receipt
+    const receipt = result.receipt || {
+      contractAddress: result.tokenAddress,
+      transactionHash: result.txHash,
+      blockNumber: result.blockNumber,
+      gasUsed: { toString: () => '0' }
+    };
+
+    // Additional validation using helper
+    const validation = await validateDeployment(provider, result.tokenAddress);
+    console.log('✅', validation.message);
+
+    // Convert initialSupply to string
+    const initialSupplyBigInt = ethers.parseUnits(tokenParams.initialSupply.toString(), 18);
+    const initialSupplyString = initialSupplyBigInt.toString();
+
+    // Store comprehensive deployment info
+    const deploymentInfo = storeDeploymentInfo({
+      contractAddress: result.tokenAddress,
+      txHash: result.txHash,
+      blockNumber: receipt.blockNumber || result.blockNumber,
+      gasUsed: receipt.gasUsed ? (typeof receipt.gasUsed === 'bigint' ? receipt.gasUsed.toString() : receipt.gasUsed.toString()) : '0',
+      gasPrice: '0', // Will be updated if available
+      tokenName: tokenParams.name,
+      tokenSymbol: tokenParams.symbol,
+      initialSupply: initialSupplyString,
+      taxPercent: tokenParams.taxPercent || 0,
+      taxWallet: tokenParams.taxWallet || ethers.ZeroAddress,
+      reflectionPercent: tokenParams.reflectionPercent || 0,
+      burnPercent: tokenParams.burnPercent || 0,
+      enableReflection: tokenParams.enableReflection || false,
+      enableBurn: tokenParams.enableBurn || false,
+      owner: ownerWallet
+    });
+
+    // Generate verification instructions
+    const instructions = generateVerificationInstructions(deploymentInfo);
+
+    // Save token to database with deployment info
     const tokenId = await saveToken(userId, {
       token_name: tokenParams.name,
       token_symbol: tokenParams.symbol,
@@ -186,11 +256,21 @@ const deployTokenAfterPayment = async (
       owner_wallet: ownerWallet,
       factory_address: factoryAddress,
       tx_hash: result.txHash,
-      network: "alvey",
+      network: networkKey,
       reflection_percent: tokenParams.reflectionPercent || 0,
       burn_percent: tokenParams.burnPercent || 0,
       has_reflection: tokenParams.enableReflection || false,
       has_burn: tokenParams.enableBurn || false,
+      compiler_version: deploymentInfo.compilation.compiler,
+      evm_version: deploymentInfo.compilation.evmVersion,
+      optimization_enabled: deploymentInfo.compilation.optimizationEnabled,
+      optimization_runs: deploymentInfo.compilation.optimizationRuns,
+      constructor_arguments: deploymentInfo.constructorArguments,
+      is_verified: false,
+      verification_status: 'deployment_validated',
+      deployment_info: deploymentInfo,
+      verification_notes: 'Immutable variables embedded in bytecode. Manual or Blockscout support verification required.',
+      verification_instructions: instructions,
     });
 
     await logActivity(userId, "token_deployed", {

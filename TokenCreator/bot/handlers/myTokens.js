@@ -1,5 +1,5 @@
 const { getUser, getUserTokens } = require("../utils/database");
-const { NETWORKS } = require("../config/constants");
+const { NETWORKS, getNetwork } = require("../config/constants");
 
 /**
  * Handle /my_tokens command
@@ -40,20 +40,26 @@ const handleMyTokens = async (bot, msg) => {
 
     tokens.forEach((token, index) => {
       const date = new Date(token.deployed_at).toLocaleDateString();
-      message += `${index + 1}. ${token.token_name} (${token.token_symbol})\n`;
-      message += `   Address: \`${token.token_address}\`\n`;
+      const network = getNetwork(token.network || "alvey");
+      const networkBadge = token.network === "alvey" ? "🔷" : token.network === "bscTestnet" ? "🟡" : "🟠";
+      const verifiedBadge = token.is_verified ? "✅" : "⚠️";
+      
+      message += `${index + 1}. ${networkBadge} ${verifiedBadge} <b>${token.token_name}</b> (${token.token_symbol})\n`;
+      message += `   Network: ${network.name}\n`;
+      message += `   Address: <code>${token.token_address}</code>\n`;
+      message += `   Status: ${token.is_verified ? 'Verified' : 'Not verified'}\n`;
       message += `   Created: ${date}\n\n`;
 
       keyboard.push([
         {
-          text: `${token.token_name} (${token.token_symbol})`,
+          text: `${networkBadge} ${token.token_name} (${token.token_symbol})`,
           callback_data: `token_${token.id}`,
         },
       ]);
     });
 
     await bot.sendMessage(chatId, message, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: keyboard,
       },
@@ -99,7 +105,7 @@ ${token.tax_wallet ? `Tax Wallet: \`${token.tax_wallet}\`` : ""}
 Network: ${token.network}
 Created: ${date}
 
-🔗 Explorer: ${NETWORKS[token.network]?.explorer || NETWORKS.alvey.explorer}/address/${token.token_address}
+🔗 Explorer: ${NETWORKS[token.network]?.explorer || NETWORKS.alvey.explorer}/token/${token.token_address}
 🔗 TX: ${NETWORKS[token.network]?.explorer || NETWORKS.alvey.explorer}/tx/${token.tx_hash}
 `;
 

@@ -15,7 +15,7 @@ const {
   isValidEthereumAddress,
   sanitizeInput,
 } = require("../utils/validators");
-const { ADDRESSES, PAYMENT, NETWORKS, TEST_MODE, DISABLE_RATE_LIMIT } = require("../config/constants");
+const { ADDRESSES, PAYMENT, NETWORKS, getNetwork, NETWORK_DISPLAY_NAMES, TEST_MODE, DISABLE_RATE_LIMIT } = require("../config/constants");
 const {
   startPaymentListener,
   deployTokenAfterPayment,
@@ -23,6 +23,7 @@ const {
 
 // Session steps
 const STEPS = {
+  WAITING_NETWORK: "waiting_network",
   WAITING_NAME: "waiting_name",
   WAITING_SYMBOL: "waiting_symbol",
   WAITING_SUPPLY: "waiting_supply",
@@ -105,10 +106,23 @@ const handleCreateToken = async (bot, msg) => {
     // Delete any existing session
     await deleteUserSession(telegramId);
 
-    // Start new session
-    await saveUserSession(telegramId, STEPS.WAITING_NAME, {});
+    // NEW: Start with network selection
+    const networkKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: NETWORK_DISPLAY_NAMES.alvey, callback_data: "network_alvey" }],
+          [{ text: NETWORK_DISPLAY_NAMES.bscTestnet, callback_data: "network_bscTestnet" }],
+        ],
+      },
+    };
 
-    await bot.sendMessage(chatId, "What is your token name?");
+    await bot.sendMessage(
+      chatId,
+      "🌐 <b>Select Blockchain Network</b>\n\nChoose which network you want to deploy your token on:",
+      { parse_mode: "HTML", ...networkKeyboard }
+    );
+
+    await saveUserSession(telegramId, STEPS.WAITING_NETWORK, {});
     await logActivity(user.id, "create_token_started", {});
   } catch (error) {
     console.error("Error in handleCreateToken:", error);
@@ -192,7 +206,15 @@ const handleTokenCreationFlow = async (bot, msg) => {
       } else if (choice === "no" || choice === "n") {
         session_data.taxPercent = 0;
         session_data.taxWallet = null;
-        await showPreview(bot, chatId, telegramId, session_data);
+        // NEW: Continue to reflection choice instead of going to preview
+        await saveUserSession(telegramId, STEPS.WAITING_REFLECTION_CHOICE, session_data);
+        await bot.sendMessage(chatId, '💰 Enable Reflection Rewards?\n\nHolders will automatically earn rewards just by holding tokens.', {
+          reply_markup: {
+            keyboard: [[{ text: "✅ Yes" }, { text: "❌ No" }]],
+            resize_keyboard: true,
+            one_time_keyboard: true,
+          },
+        });
       } else {
         await bot.sendMessage(chatId, "Please answer Yes or No.");
       }
@@ -316,9 +338,10 @@ const handleTokenCreationFlow = async (bot, msg) => {
       if (text.toLowerCase() === "confirm" || text === "✅ Confirm") {
         if (TEST_MODE) {
           // Skip payment in test mode - go directly to owner wallet
+          const network = getNetwork(session_data.network || "alvey");
           await bot.sendMessage(
             chatId,
-            "🧪 TEST MODE: Skipping payment verification.\n\nPlease send your ALVEY CHAIN wallet address to receive token ownership."
+            `🧪 TEST MODE: Skipping payment verification.\n\nPlease send your ${network.name.toUpperCase()} wallet address to receive token ownership.`
           );
           await saveUserSession(telegramId, STEPS.WAITING_OWNER_WALLET, session_data);
         } else {
@@ -379,12 +402,16 @@ const showPreview = async (bot, chatId, telegramId, sessionData) => {
                     (sessionData.reflectionPercent || 0) + 
                     (sessionData.burnPercent || 0);
   
+  // NEW: Get network info
+  const network = getNetwork(sessionData.network || "alvey");
+  
   const preview = `
 📋 Token Preview:
 
-Name: ${sessionData.name}
-Symbol: ${sessionData.symbol}
-Supply: ${parseInt(sessionData.initialSupply).toLocaleString()}
+🌐 Network: <b>${network.name}</b>
+📝 Name: ${sessionData.name}
+🏷️ Symbol: ${sessionData.symbol}
+📊 Supply: ${parseInt(sessionData.initialSupply).toLocaleString()}
 
 💰 TAX: ${sessionData.taxPercent || 0}%
 ${sessionData.taxWallet ? `Tax Wallet: ${sessionData.taxWallet}` : ""}
@@ -394,6 +421,8 @@ ${sessionData.taxWallet ? `Tax Wallet: ${sessionData.taxWallet}` : ""}
 💾 Total Fees: ${totalFees}%
 
 ${paymentInfo}
+
+<i>Blockchain: ${network.name} (${network.currency})</i>
 `;
 
   await saveUserSession(telegramId, STEPS.WAITING_CONFIRMATION, sessionData);
@@ -504,6 +533,9 @@ const handleTokenDeployment = async (
       }
     }
 
+    // NEW: Get network info
+    const network = getNetwork(sessionData.network || "alvey");
+
     // Deploy token
     const result = await deployTokenAfterPayment(
       bot,
@@ -519,35 +551,80 @@ const handleTokenDeployment = async (
         burnPercent: sessionData.burnPercent || 0,
         enableReflection: sessionData.enableReflection || false,
         enableBurn: sessionData.enableBurn || false,
+        network: sessionData.network || "alvey",
       },
       ownerWallet
     );
 
     // Success message
     const successMessage = `
-✅ Token created successfully!
+✅ <b>Token created successfully!</b>
 
-📋 Details:
-Name: ${sessionData.name}
-Symbol: ${sessionData.symbol}
-Address: \`${result.tokenAddress}\`
-Owner: \`${ownerWallet}\`
-Supply: ${parseInt(sessionData.initialSupply).toLocaleString()}
-Tax: ${sessionData.taxPercent || 0}%
+📋 <b>Details:</b>
+🌐 Network: <b>${network.name}</b>
+📝 Name: ${sessionData.name}
+🏷️ Symbol: ${sessionData.symbol}
+📍 Address: <code>${result.tokenAddress}</code>
+👤 Owner: <code>${ownerWallet}</code>
+📊 Supply: ${parseInt(sessionData.initialSupply).toLocaleString()}
+💰 Tax: ${sessionData.taxPercent || 0}%
 
-🔗 Transaction: ${NETWORKS.alvey.explorer}/tx/${result.txHash}
-🔗 Token: ${NETWORKS.alvey.explorer}/address/${result.tokenAddress}
+🔗 <a href="${network.explorer}/tx/${result.txHash}">View Transaction</a>
+🔗 <a href="${network.explorer}/token/${result.tokenAddress}">View Token</a>
+
+<b>Next Steps:</b>
+1. Save your token address
+2. Verification info sent separately
+3. See manual verification guide
 `;
 
-    await bot.sendMessage(chatId, successMessage, { parse_mode: "Markdown" });
+    // Send success message with deployment info button
+    await bot.sendMessage(chatId, successMessage, { 
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { 
+              text: '🔗 View Token', 
+              url: `${network.explorer}/address/${result.tokenAddress}` 
+            },
+            { 
+              text: '📋 Deployment Info', 
+              callback_data: `di_${result.tokenAddress}` 
+            }
+          ]
+        ]
+      }
+    });
+
+    // Send detailed verification instructions if available
+    if (result.verificationInstructions) {
+      await bot.sendMessage(chatId, result.verificationInstructions, { parse_mode: 'HTML' });
+    }
 
     // Clean up session
     await deleteUserSession(telegramId);
   } catch (error) {
-    console.error("Error deploying token:", error);
-    
-    // Check if error is about Factory version
-    if (error.message && error.message.includes("Reflection and Burn features require")) {
+    console.error("DEPLOYMENT ERROR:", error);
+    console.error("Error type:", error.constructor.name);
+    console.error("Full error:", error);
+
+    let errorMessage = '❌ <b>Deployment failed:</b>\n\n';
+
+    if (error.message && error.message.includes('insufficient funds')) {
+      errorMessage += '💰 Not enough ALV for gas fees\n';
+    } else if (error.message && error.message.includes('CALL_EXCEPTION')) {
+      errorMessage += '⚠️ Constructor arguments rejected\n';
+    } else if (error.message && error.message.includes('timeout')) {
+      errorMessage += '⏱️ RPC timeout - network congested\n';
+    } else if (error.message && error.message.includes('VALIDATION FAILED')) {
+      errorMessage += error.message + '\n';
+    } else if (error.message && error.message.includes('DEPLOYMENT FAILED')) {
+      errorMessage += error.message + '\n';
+    } else if (error.message && error.message.includes('TX FAILED')) {
+      errorMessage += error.message + '\n';
+    } else if (error.message && error.message.includes("Reflection and Burn features require")) {
+      // Factory version error - show specific message
       await bot.sendMessage(
         chatId,
         `❌ ${error.message}\n\n` +
@@ -560,11 +637,18 @@ Tax: ${sessionData.taxPercent || 0}%
         { parse_mode: 'HTML' }
       );
     } else {
-      await bot.sendMessage(
-        chatId,
-        `❌ Error deploying token: ${error.message}`
-      );
+      // Generic error handling
+      errorMessage += error.message + '\n';
     }
+
+    errorMessage += '\n<b>Debug info:</b>\n<code>';
+    errorMessage += error.message.substring(0, 200);
+    errorMessage += '</code>';
+
+    await bot.sendMessage(chatId, errorMessage, { parse_mode: 'HTML' });
+    
+    // Log for debugging
+    console.error('Full error logged above');
   }
 };
 

@@ -71,31 +71,120 @@ const getUser = async (telegramId, userData = {}) => {
  */
 const saveToken = async (userId, tokenData) => {
   try {
-    const [result] = await pool.execute(
-      `INSERT INTO tokens (
-        user_id, token_name, token_symbol, initial_supply, tax_percent,
-        tax_wallet, token_address, owner_wallet, factory_address, tx_hash, network,
-        reflection_percent, burn_percent, has_reflection, has_burn
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId,
-        tokenData.token_name,
-        tokenData.token_symbol,
-        tokenData.initial_supply.toString(),
-        tokenData.tax_percent || 0,
-        tokenData.tax_wallet || null,
-        tokenData.token_address,
-        tokenData.owner_wallet,
-        tokenData.factory_address,
-        tokenData.tx_hash,
-        tokenData.network || "alvey",
-        tokenData.reflection_percent || 0,
-        tokenData.burn_percent || 0,
-        tokenData.has_reflection || false,
-        tokenData.has_burn || false,
-      ]
-    );
-    return result.insertId;
+    // Check if new columns exist, if not use old format
+    const [columns] = await pool.execute("SHOW COLUMNS FROM tokens LIKE 'compiler_version'");
+    const hasNewColumns = columns.length > 0;
+
+    if (hasNewColumns) {
+      // Check if deployment_info column exists
+      const [deploymentColumns] = await pool.execute("SHOW COLUMNS FROM tokens LIKE 'deployment_info'");
+      const hasDeploymentColumns = deploymentColumns.length > 0;
+
+      if (hasDeploymentColumns) {
+        // Use new format with deployment info
+        const [result] = await pool.execute(
+          `INSERT INTO tokens (
+            user_id, token_name, token_symbol, initial_supply, tax_percent,
+            tax_wallet, token_address, owner_wallet, factory_address, tx_hash, network,
+            reflection_percent, burn_percent, has_reflection, has_burn,
+            compiler_version, evm_version, optimization_enabled, optimization_runs,
+            constructor_arguments, is_verified, verification_status,
+            deployment_info, verification_notes, verification_instructions
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId,
+            tokenData.token_name,
+            tokenData.token_symbol,
+            tokenData.initial_supply.toString(),
+            tokenData.tax_percent || 0,
+            tokenData.tax_wallet || null,
+            tokenData.token_address,
+            tokenData.owner_wallet,
+            tokenData.factory_address,
+            tokenData.tx_hash,
+            tokenData.network || "alvey",
+            tokenData.reflection_percent || 0,
+            tokenData.burn_percent || 0,
+            tokenData.has_reflection || false,
+            tokenData.has_burn || false,
+            tokenData.compiler_version || 'v0.8.28+commit.7893614a',
+            tokenData.evm_version || 'paris',
+            tokenData.optimization_enabled !== undefined ? tokenData.optimization_enabled : true,
+            tokenData.optimization_runs || 200,
+            tokenData.constructor_arguments ? JSON.stringify(tokenData.constructor_arguments) : null,
+            tokenData.is_verified || false,
+            tokenData.verification_status || 'deployment_validated',
+            tokenData.deployment_info ? JSON.stringify(tokenData.deployment_info) : null,
+            tokenData.verification_notes || null,
+            tokenData.verification_instructions || null,
+          ]
+        );
+        return result.insertId;
+      } else {
+        // Use format without deployment_info columns
+        const [result] = await pool.execute(
+          `INSERT INTO tokens (
+            user_id, token_name, token_symbol, initial_supply, tax_percent,
+            tax_wallet, token_address, owner_wallet, factory_address, tx_hash, network,
+            reflection_percent, burn_percent, has_reflection, has_burn,
+            compiler_version, evm_version, optimization_enabled, optimization_runs,
+            constructor_arguments, is_verified, verification_status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId,
+            tokenData.token_name,
+            tokenData.token_symbol,
+            tokenData.initial_supply.toString(),
+            tokenData.tax_percent || 0,
+            tokenData.tax_wallet || null,
+            tokenData.token_address,
+            tokenData.owner_wallet,
+            tokenData.factory_address,
+            tokenData.tx_hash,
+            tokenData.network || "alvey",
+            tokenData.reflection_percent || 0,
+            tokenData.burn_percent || 0,
+            tokenData.has_reflection || false,
+            tokenData.has_burn || false,
+            tokenData.compiler_version || 'v0.8.28+commit.7893614a',
+            tokenData.evm_version || 'paris',
+            tokenData.optimization_enabled !== undefined ? tokenData.optimization_enabled : true,
+            tokenData.optimization_runs || 200,
+            tokenData.constructor_arguments ? JSON.stringify(tokenData.constructor_arguments) : null,
+            tokenData.is_verified || false,
+            tokenData.verification_status || 'pending',
+          ]
+        );
+        return result.insertId;
+      }
+    } else {
+      // Fallback to old format
+      const [result] = await pool.execute(
+        `INSERT INTO tokens (
+          user_id, token_name, token_symbol, initial_supply, tax_percent,
+          tax_wallet, token_address, owner_wallet, factory_address, tx_hash, network,
+          reflection_percent, burn_percent, has_reflection, has_burn
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          tokenData.token_name,
+          tokenData.token_symbol,
+          tokenData.initial_supply.toString(),
+          tokenData.tax_percent || 0,
+          tokenData.tax_wallet || null,
+          tokenData.token_address,
+          tokenData.owner_wallet,
+          tokenData.factory_address,
+          tokenData.tx_hash,
+          tokenData.network || "alvey",
+          tokenData.reflection_percent || 0,
+          tokenData.burn_percent || 0,
+          tokenData.has_reflection || false,
+          tokenData.has_burn || false,
+        ]
+      );
+      return result.insertId;
+    }
   } catch (error) {
     console.error("Error in saveToken:", error);
     throw error;
@@ -328,6 +417,43 @@ const updateTokenOwner = async (tokenId, newOwner) => {
   }
 };
 
+/**
+ * NEW: Update token verification status
+ * @param {string} tokenAddress - Token contract address
+ * @param {boolean} isVerified - Whether token is verified
+ * @param {string} status - Verification status ('pending', 'verified', 'failed')
+ * @returns {Promise<void>}
+ */
+const updateTokenVerification = async (tokenAddress, isVerified, status = 'pending') => {
+  try {
+    // Check if columns exist first
+    const [columns] = await pool.execute("SHOW COLUMNS FROM tokens LIKE 'is_verified'");
+    
+    if (columns.length === 0) {
+      console.warn("Verification columns not found. Please run: npm run add-verification-columns");
+      return; // Silently skip if columns don't exist
+    }
+    
+    await pool.execute(
+      "UPDATE tokens SET is_verified = ?, verification_status = ?, verified_at = ? WHERE token_address = ?",
+      [
+        isVerified,
+        status,
+        isVerified ? new Date() : null,
+        tokenAddress
+      ]
+    );
+  } catch (error) {
+    // If column doesn't exist, just log and continue
+    if (error.code === 'ER_BAD_FIELD_ERROR') {
+      console.warn("Verification columns not found. Please run: npm run add-verification-columns");
+    } else {
+      console.error("Error in updateTokenVerification:", error);
+    }
+    // Don't throw - verification status update shouldn't break the flow
+  }
+};
+
 module.exports = {
   pool,
   getUser,
@@ -342,5 +468,6 @@ module.exports = {
   deleteUserSession,
   logActivity,
   updateTokenOwner,
+  updateTokenVerification,
 };
 

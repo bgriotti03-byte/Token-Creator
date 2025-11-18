@@ -6,11 +6,12 @@
 const { ethers } = require('ethers');
 const { getTokenFeatures, getTokenDetails } = require('../utils/blockchain');
 const { logActivity, getUser } = require('../utils/database');
+const { getNetwork, NETWORK_DISPLAY_NAMES } = require('../config/constants');
 
 /**
  * Analyze a deployed token and send detailed report
  */
-async function analyzeToken(bot, chatId, userId, tokenAddress) {
+async function analyzeToken(bot, chatId, userId, tokenAddress, networkKey = null) {
     try {
         // Validate address format
         if (!ethers.isAddress(tokenAddress)) {
@@ -18,19 +19,39 @@ async function analyzeToken(bot, chatId, userId, tokenAddress) {
             return;
         }
 
+        // NEW: If network not provided, ask user
+        if (!networkKey) {
+            const networkKeyboard = {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: NETWORK_DISPLAY_NAMES.alvey, callback_data: `analyze_alvey_${tokenAddress}` }],
+                        [{ text: NETWORK_DISPLAY_NAMES.bscTestnet, callback_data: `analyze_bscTestnet_${tokenAddress}` }],
+                    ]
+                }
+            };
+            
+            bot.sendMessage(
+                chatId,
+                '🌐 Select network where token is deployed:',
+                networkKeyboard
+            );
+            return;
+        }
+
         // Send analyzing message
         bot.sendMessage(chatId, '🔍 Analyzing token on blockchain...');
 
         // Get token details
-        const details = await getTokenDetails(tokenAddress, 'alvey');
+        const details = await getTokenDetails(tokenAddress, networkKey);
         
         if (!details) {
-            bot.sendMessage(chatId, '❌ Token not found on blockchain');
+            const network = getNetwork(networkKey);
+            bot.sendMessage(chatId, `❌ Token not found on ${network.name}`);
             return;
         }
 
         // Get features from factory
-        const features = await getTokenFeatures(tokenAddress, 'alvey');
+        const features = await getTokenFeatures(tokenAddress, networkKey);
 
         if (!features) {
             bot.sendMessage(chatId, '⚠️ Could not retrieve full feature set');
@@ -38,7 +59,7 @@ async function analyzeToken(bot, chatId, userId, tokenAddress) {
         }
 
         // Build detailed analysis report
-        const analysis = buildTokenAnalysis(details, features, tokenAddress);
+        const analysis = buildTokenAnalysis(details, features, tokenAddress, networkKey);
         
         // Send analysis
         bot.sendMessage(chatId, analysis, { parse_mode: 'HTML' });
@@ -48,6 +69,7 @@ async function analyzeToken(bot, chatId, userId, tokenAddress) {
             try {
                 await logActivity(userId, 'analyzed_token', {
                     tokenAddress,
+                    network: networkKey,
                     tokenName: details.name,
                     hasReflection: features.hasReflection,
                     hasBurn: features.hasBurn
@@ -71,7 +93,8 @@ async function analyzeToken(bot, chatId, userId, tokenAddress) {
 /**
  * Build formatted analysis report
  */
-function buildTokenAnalysis(details, features, tokenAddress) {
+function buildTokenAnalysis(details, features, tokenAddress, networkKey = 'alvey') {
+    const network = getNetwork(networkKey);
     // Build features list
     const featuresList = [];
     
@@ -108,6 +131,10 @@ function buildTokenAnalysis(details, features, tokenAddress) {
     const report = `
 <b>📊 TOKEN ANALYSIS REPORT</b>
 
+<b>Network Information:</b>
+🌐 Network: <b>${network.name}</b>
+⛓️ Chain ID: ${network.chainId}
+
 <b>Basic Information:</b>
 📝 Name: <code>${details.name}</code>
 🏷️ Symbol: <code>${details.symbol}</code>
@@ -129,7 +156,7 @@ ${featuresList.join('\n')}
 🔒 Settings: ✅ IMMUTABLE (Cannot be changed)
 
 <b>Explorer Links:</b>
-<a href="https://alveyscan.com/address/${tokenAddress}">View on Alvey Chain Explorer</a>
+<a href="${network.explorer}/token/${tokenAddress}">View on ${network.name} Explorer</a>
     `;
 
     return report;

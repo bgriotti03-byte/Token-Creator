@@ -1,19 +1,62 @@
 require("dotenv").config();
 
-// Network configurations
+// Multi-chain network configurations
 const NETWORKS = {
   alvey: {
     name: "Alvey Chain",
-    rpc: process.env.ALVEY_RPC || "https://elves-core2.alvey.io/",
+    rpc: process.env.ALVEY_RPC_URL || process.env.ALVEY_RPC || "https://elves-core2.alvey.io/",
     chainId: 3797,
+    currency: "ALV",
     explorer: "https://alveyscan.com",
+    factoryAddress: process.env.FACTORY_ALVEY_ADDRESS || process.env.FACTORY_ADDRESS || "0x0000000000000000000000000000000000000000",
+    nativeCurrency: {
+      name: "Alvey",
+      symbol: "ALV",
+      decimals: 18,
+    },
+  },
+  bscTestnet: {
+    name: "BSC Testnet",
+    rpc: process.env.BSC_TESTNET_RPC || "https://data-seed-prebsc-1-s1.binance.org:8545",
+    chainId: 97,
+    currency: "tBNB",
+    explorer: "https://testnet.bscscan.com",
+    factoryAddress: process.env.FACTORY_BSC_TESTNET_ADDRESS || "0x6725F303b657a9451d8BA641348b6761A6CC7a17",
+    nativeCurrency: {
+      name: "Test BNB",
+      symbol: "tBNB",
+      decimals: 18,
+    },
   },
   bsc: {
     name: "Binance Smart Chain",
     rpc: process.env.BSC_RPC || "https://bsc-dataseed1.binance.org",
     chainId: 56,
+    currency: "BNB",
     explorer: "https://bscscan.com",
+    factoryAddress: process.env.FACTORY_BSC_ADDRESS || "0x0000000000000000000000000000000000000000",
+    nativeCurrency: {
+      name: "BNB",
+      symbol: "BNB",
+      decimals: 18,
+    },
   },
+};
+
+// Helper to get network by key
+function getNetwork(networkKey) {
+  const network = NETWORKS[networkKey];
+  if (!network) {
+    throw new Error(`Network ${networkKey} not found`);
+  }
+  return network;
+}
+
+// Network display names for user selection
+const NETWORK_DISPLAY_NAMES = {
+  alvey: "🔷 Alvey Chain",
+  bscTestnet: "🟡 BSC Testnet",
+  bsc: "🟠 BSC Mainnet",
 };
 
 // Contract addresses
@@ -83,6 +126,8 @@ const TOKEN_ABI = [
 
 module.exports = {
   NETWORKS,
+  getNetwork,
+  NETWORK_DISPLAY_NAMES,
   ADDRESSES,
   PAYMENT,
   TIMEOUTS,

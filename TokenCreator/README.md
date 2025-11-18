@@ -15,7 +15,9 @@ A Telegram bot that allows users to create ERC-20 tokens on Alvey Chain securely
 
 - **Backend**: Node.js with `node-telegram-bot-api`
 - **Blockchain**: Ethers.js v6, Hardhat
-- **Network**: Alvey Chain (Chain ID: 3797)
+- **Networks**: 
+  - Alvey Chain (Chain ID: 3797) - Main network
+  - BSC Testnet (Chain ID: 97) - Testing network
 - **Database**: MySQL 8
 - **Smart Contracts**: Solidity 0.8.28 with OpenZeppelin
 
@@ -77,8 +79,14 @@ USDT_BSC=0x55d398326f99059fF775485246999027B3197955
 aUSDT_ALVEY=0x0000000000000000000000000000000000000000
 
 # Network RPCs
-ALVEY_RPC=https://elves-core2.alvey.io/
+ALVEY_RPC_URL=https://elves-core2.alvey.io/
 BSC_RPC=https://bsc-dataseed1.binance.org
+BSC_TESTNET_RPC=https://data-seed-prebsc-1-s1.binance.org:8545
+
+# Factory Addresses (one per network)
+FACTORY_ALVEY_ADDRESS=0x0000000000000000000000000000000000000000
+FACTORY_BSC_TESTNET_ADDRESS=0x6725F303b657a9451d8BA641348b6761A6CC7a17
+FACTORY_BSC_ADDRESS=0x0000000000000000000000000000000000000000
 ```
 
 ### 4. Setup database
@@ -91,13 +99,23 @@ This will create the MySQL database and all required tables.
 
 ### 5. Deploy smart contracts
 
+#### Deploy to Alvey Chain
+
 ```bash
 npm run deploy
 ```
 
 This will deploy the TokenFactory contract to Alvey Chain and save the address to your `.env` file.
 
-**Important**: Make sure your `BOT_PRIVATE_KEY` wallet has ALV tokens for gas fees.
+#### Deploy to BSC Testnet (for testing)
+
+```bash
+npx hardhat run scripts/deployBscTestnet.js --network bscTestnet
+```
+
+**Important**: 
+- Make sure your `BOT_PRIVATE_KEY` wallet has ALV tokens for gas fees (Alvey Chain)
+- For BSC Testnet, get testnet tBNB from: https://testnet.bnbchain.org/faucet-smart
 
 ### 6. Start the bot
 
@@ -310,10 +328,52 @@ For issues, questions, or contributions, please open an issue on the repository.
 
 MIT License
 
+## Multi-Chain Deployment
+
+The bot now supports deploying tokens on multiple blockchain networks:
+
+### Supported Networks
+
+- **Alvey Chain** (Mainnet) - Chain ID: 3797
+- **BSC Testnet** - Chain ID: 97 (for testing)
+
+### Testing on BSC Testnet
+
+1. Get testnet tBNB from faucet: https://testnet.bnbchain.org/faucet-smart
+2. Deploy factory to BSC Testnet:
+   ```bash
+   npx hardhat run scripts/deployBscTestnet.js --network bscTestnet
+   ```
+3. Copy factory address to `.env`:
+   ```bash
+   FACTORY_BSC_TESTNET_ADDRESS=0x...
+   ```
+4. Create tokens on BSC Testnet to save on gas fees, then deploy to production networks once tested.
+
+### Network Selection
+
+When creating a token with `/create_token`, users will be prompted to select their preferred network first. The bot will:
+- Use the correct factory contract for the selected network
+- Deploy tokens on the chosen blockchain
+- Display network-specific explorer links
+- Store network information in the database
+
+### Migration to BSC Mainnet (Future)
+
+When ready for production on BSC Mainnet:
+
+1. Add BSC Mainnet factory address to `.env`:
+   ```bash
+   FACTORY_BSC_ADDRESS=0x...
+   ```
+2. Deploy factory to BSC Mainnet (costs ~0.01 BNB)
+3. Network selection will automatically include BSC Mainnet option
+
 ## References
 
 - [Alvey Chain Explorer](https://alveyscan.com)
 - [BSC Explorer](https://bscscan.com)
+- [BSC Testnet Explorer](https://testnet.bscscan.com)
 - [OpenZeppelin Contracts](https://docs.openzeppelin.com)
 - [Ethers.js Documentation](https://docs.ethers.org/v6/)
 - [Telegram Bot API](https://core.telegram.org/bots/api)

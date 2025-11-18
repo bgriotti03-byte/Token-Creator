@@ -47,9 +47,21 @@ ALTER TABLE tokens ADD COLUMN IF NOT EXISTS total_fees_percent TINYINT GENERATED
     (COALESCE(tax_percent, 0) + COALESCE(reflection_percent, 0) + COALESCE(burn_percent, 0)) 
     STORED COMMENT 'Total of all fees combined';
 
+-- NEW: Add chain_id column if not exists
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS chain_id INT COMMENT 'Network chain ID';
+
 -- NEW: Create index for feature searches
 CREATE INDEX IF NOT EXISTS idx_features ON tokens(has_reflection, has_burn);
 CREATE INDEX IF NOT EXISTS idx_total_fees ON tokens(total_fees_percent);
+CREATE INDEX IF NOT EXISTS idx_network ON tokens(network);
+
+-- NEW: Add verification columns
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE COMMENT 'Contract verified on explorer';
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP NULL COMMENT 'When contract was verified';
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS verification_status ENUM('pending', 'verified', 'failed') DEFAULT 'pending' COMMENT 'Verification status';
+
+-- Index for querying verified tokens
+CREATE INDEX IF NOT EXISTS idx_verified ON tokens(is_verified, verification_status);
 
 -- Payments table
 CREATE TABLE IF NOT EXISTS payments (
